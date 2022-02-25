@@ -10,7 +10,9 @@
 #include "zlib.h"
 
 using proxy_wasm::RegisterForeignFunction;
+using proxy_wasm::WasmBase;
 using proxy_wasm::WasmForeignFunction;
+using proxy_wasm::WasmResult;
 
 namespace Envoy {
 namespace Extensions {
@@ -23,6 +25,64 @@ template <typename T> WasmForeignFunction createFromClass() {
   auto c = std::make_shared<T>();
   return c->create(c);
 }
+
+// The return value contract is a null separated byte array. So keys of
+// 'a', 'b', and 'c' will be returned as "a\0b\0c\0".  This is the simplest
+// and cheapest way to marshall an array of strings into a byte array.
+RegisterForeignFunction registerGetSharedDataKeysForeignFunction(
+    "get_shared_data_keys",
+    [](WasmBase&, std::string_view argument,
+       const std::function<void*(size_t size)>& alloc_result) -> WasmResult {
+      auto context = proxy_wasm::contextOrEffectiveContext();
+      (void)argument;
+
+      std::vector<std::string> result;
+      auto err = context->getSharedDataKeys(&result);
+      if (err != WasmResult::Ok) {
+        return err;
+      }
+
+      int bytesRequired = 0;
+      for (std::string k : result) {
+        bytesRequired += k.length() + 1;
+      }
+
+      auto target_buf = alloc_result(bytesRequired);
+
+      for (std::string k : result) {
+        memcpy(target_buf, k.c_str(), k.length() + 1);
+        target_buf = static_cast<void*>(static_cast<char*>(target_buf) + (k.length() + 1));
+      }
+      return WasmResult::Ok;
+    });
+
+RegisterForeignFunction registerRemoveSharedDataForeignFunction(
+    "remove_shared_data_key",
+    [](WasmBase&, std::string_view arguments,
+       const std::function<void*(size_t size)>& alloc_result) -> WasmResult {
+      std::pair<std::string, uint32_t> result;
+      auto context = proxy_wasm::contextOrEffectiveContext();
+
+      int intSize = sizeof(int);
+      std::string_view key = arguments.substr(0, arguments.size() - intSize);
+
+      int cas = 0;
+      std::string_view cas_view = arguments.substr(arguments.size() - intSize, intSize);
+      std::memcpy(&cas, cas_view.begin(), intSize);
+
+      auto err = context->removeSharedDataKey(key, cas, &result);
+      if (err != WasmResult::Ok) {
+        return err;
+      }
+
+      auto target_buf = alloc_result(result.first.length() + intSize);
+
+      memcpy(target_buf, result.first.c_str(), result.first.length()); // value
+      target_buf = static_cast<void*>(static_cast<char*>(target_buf) + (result.first.length()));
+      memcpy(target_buf, &result.second, sizeof(result.second)); // cas
+
+      return WasmResult::Ok;
+    });
 
 RegisterForeignFunction registerCompressForeignFunction(
     "compress",

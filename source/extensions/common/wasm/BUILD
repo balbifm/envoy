@@ -95,6 +95,7 @@ envoy_cc_library(
         "@com_google_cel_cpp//eval/public:value_export_util",
         "@envoy_api//envoy/extensions/wasm/v3:pkg_cc_proto",
         "@proxy_wasm_cpp_host//:base_lib",
+        "@proxy_wasm_cpp_host//:headers",
         "@proxy_wasm_cpp_host//:null_lib",
     ] + select(
         {
